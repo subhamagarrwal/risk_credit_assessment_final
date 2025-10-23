@@ -1,0 +1,44 @@
+{
+  "CoLI": {
+    "correlation_based": {
+      "utility_regularit": 0.3404049487008291,
+      "subscription_adherence": 0.3787049961778017,
+      "expense_stability": 0.2808900551213693
+    },
+    "ridge_based": {
+      "utility_regularit": 0.0,
+      "subscription_adherence": 0.5637305307839963,
+      "expense_stability": 0.4362694692160038
+    }
+  },
+  "BRI": {
+    "correlation_based": {
+      "camels_proxy": 0.32239729171072856,
+      "upi_success": 0.290537528108681,
+      "tier_weight_component": 0.3870651801805905
+    },
+    "ridge_based": {
+      "camels_proxy": 0.0,
+      "upi_success": 0.4145664668227116,
+      "tier_weight_component": 0.5854335331772884
+    }
+  },
+  "calibration": {
+    "CoLI_corr": {
+      "intercept": 10.322190545837094,
+      "slope": -11.686953826613045
+    },
+    "BRI_corr": {
+      "intercept": 1.3582964411097203,
+      "slope": -1.9851155820595776
+    },
+    "CoLI_ridge": {
+      "intercept": 4.447869706720879,
+      "slope": -5.274323636852296
+    },
+    "BRI_ridge": {
+      "intercept": 1.1635652053675025,
+      "slope": -1.6631293248080752
+    }
+  }
+}
