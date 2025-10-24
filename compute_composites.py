@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Compute data-driven weights for CoLI and BRI composites.
+Compute data-driven weights for CoLI and BRI composites using behavioral features.
 
-CoLI components:
-    - utility_regularit          : 1 - scaled missed-utilities
-    - subscription_adherence     : 1 - scaled aggregate subscription misses
-    - expense_stability          : 1 - scaled deviation between desired and realised savings rates
+CoLI (Continuity-of-Life Index) components:
+    - Utility_Payment_Regularity     : 1 - (Missed_Utilities / (Missed_Utilities + 1))
+    - Recurring_Payment_Stability    : 1 - ((Missed_Rent + Missed_Loan_Repayment) / 2)
+    - Expense_Volatility_Inverse     : 1 - Expense_Volatility (normalized std of expenses)
 
-BRI components:
-    - camels_proxy               : scaled (Adjusted_Annual_Savings / Annual_Income)
-    - upi_success                : 1 - scaled total missed payments
-    - tier_weight_component      : scaled tier weight (Tier_1 > Tier_2 > Tier_3)
+BRI (Bank Reliability Index) components:
+    - CAMELS_Score                   : Bank_CAELS_Score from bank risk mapping
+    - UPI_Success_Rate               : 1 - (Total_Missed_Payments / max(Total_Missed_Payments))
+    - Bank_Tier_Weight               : Based on Bank_Risk_Tier (Low=1.0, Medium=0.7, High=0.4)
 
 Targets:
     - reliability_target         : Payment_Reliability_Score scaled to [0,1]
@@ -94,7 +94,7 @@ def fairness_report(series: pd.Series, group: pd.Series, name: str) -> pd.DataFr
 # ---------------------------------------------------------------------
 # Load data
 # ---------------------------------------------------------------------
-DATA_PATH = pathlib.Path("processed_data_with_banks.csv")
+DATA_PATH = pathlib.Path("processed_data_with_banks_caels.csv")
 df = pd.read_csv(DATA_PATH)
 df.columns = df.columns.str.strip()
 
@@ -102,10 +102,12 @@ df.columns = df.columns.str.strip()
 df = df.replace([np.inf, -np.inf], np.nan)
 
 required_cols = [
-    "Missed_Utilities", "Missed_Rent", "Missed_Insurance", "Missed_Loan_Repayment",
-    "Desired_Savings_Percentage", "Adjusted_Savings_Rate", "Adjusted_Annual_Savings",
-    "Annual_Income", "Total_Missed_Payments", "Payment_Reliability_Score",
-    "Missed_Payment_Rate", "City_Tier", "Occupation"
+    "Rent", "Loan_Repayment", "Insurance", "Groceries", "Transport", 
+    "Eating_Out", "Entertainment", "Utilities", "Healthcare", "Education", "Miscellaneous",
+    "Missed_Utilities", "Missed_Rent", "Missed_Loan_Repayment",
+    "Total_Missed_Payments", "Payment_Reliability_Score",
+    "Missed_Payment_Rate", "City_Tier", "Occupation",
+    "Bank_CAELS_Score", "Bank_Risk_Tier"
 ]
 missing_cols = set(required_cols) - set(df.columns)
 if missing_cols:
@@ -120,44 +122,77 @@ print(f"Total records: {len(df):,}")
 print(f"Columns: {len(df.columns)}")
 
 # ---------------------------------------------------------------------
-# Feature engineering for component metrics
+# Feature engineering for behavioral component metrics
 # ---------------------------------------------------------------------
 print(f"\n{'='*80}")
-print("ENGINEERING COMPONENT FEATURES")
+print("ENGINEERING BEHAVIORAL COMPONENT FEATURES")
 print(f"{'='*80}")
 
-# Utility regularity: fewer missed utility payments is better
-df["utility_regularit"] = 1 - minmax(df["Missed_Utilities"])
-print("✓ utility_regularit")
+# =============================================================================
+# COLI COMPONENTS (Continuity-of-Life Index)
+# =============================================================================
 
-# Subscription adherence: aggregated misses across subscription-like items
-subscription_miss = df[["Missed_Rent", "Missed_Insurance", "Missed_Loan_Repayment"]].sum(axis=1)
-df["subscription_adherence"] = 1 - minmax(subscription_miss)
-print("✓ subscription_adherence")
+# 1. Utility Payment Regularity
+df["Utility_Payment_Regularity"] = 1 - (df["Missed_Utilities"] / 
+                                        (df["Missed_Utilities"] + 1))
+print("✓ Utility_Payment_Regularity")
 
-# Expense stability: small gap between planned and realised savings rate is better
-savings_gap = (df["Desired_Savings_Percentage"] - df["Adjusted_Savings_Rate"]).abs()
-df["expense_stability"] = 1 - minmax(savings_gap)
-print("✓ expense_stability")
+# 2. Recurring Payment Stability
+df["Recurring_Payment_Stability"] = 1 - (
+    (df["Missed_Rent"] + df["Missed_Loan_Repayment"]) / 2
+)
+print("✓ Recurring_Payment_Stability")
 
-# CAMELS proxy: capital adequacy-like ratio (Adjusted_Annual_Savings / Annual_Income)
-camels_raw = df["Adjusted_Annual_Savings"] / df["Annual_Income"].replace(0, np.nan)
-df["camels_proxy"] = minmax(camels_raw.fillna(0)).clip(0, 1)
-print("✓ camels_proxy")
+# 3. Expense Volatility (calculate std across expense categories)
+expense_columns = ['Rent', 'Loan_Repayment', 'Insurance', 'Groceries', 
+                   'Transport', 'Eating_Out', 'Entertainment', 'Utilities', 
+                   'Healthcare', 'Education', 'Miscellaneous']
+df['Expense_Volatility_Raw'] = df[expense_columns].std(axis=1)
 
-# UPI success: fewer missed payments overall
-df["upi_success"] = 1 - minmax(df["Total_Missed_Payments"])
-print("✓ upi_success")
+# Normalize to [0,1]
+df['Expense_Volatility'] = minmax(df['Expense_Volatility_Raw'])
 
-# Tier weight: higher for Tier_1, scaled to [0,1]
-tier_map = {"Tier_1": 1.0, "Tier_2": 0.7, "Tier_3": 0.4}
-df["tier_weight_component"] = df["City_Tier"].map(tier_map).fillna(0.55)
-df["tier_weight_component"] = minmax(df["tier_weight_component"])
-print("✓ tier_weight_component")
+# Invert for CoLI (lower volatility is better)
+df['Expense_Volatility_Inverse'] = 1 - df['Expense_Volatility']
+print("✓ Expense_Volatility_Inverse")
+
+# =============================================================================
+# BRI COMPONENTS (Bank Reliability Index)
+# =============================================================================
+
+# 1. CAMELS Score (already in dataset as Bank_CAELS_Score)
+# Invert it: lower CAELS = better bank (0 = best, 1 = worst)
+df["CAMELS_Score"] = 1 - df["Bank_CAELS_Score"]
+print("✓ CAMELS_Score (inverted from Bank_CAELS_Score)")
+
+# 2. UPI Success Rate
+df["UPI_Success_Rate"] = 1 - minmax(df["Total_Missed_Payments"])
+print("✓ UPI_Success_Rate")
+
+# 3. Bank Tier Weight
+bank_tier_mapping = {
+    'Low Risk': 1.0,
+    'Medium Risk': 0.7,
+    'High Risk': 0.4
+}
+df["Bank_Tier_Weight"] = df["Bank_Risk_Tier"].map(bank_tier_mapping)
+print("✓ Bank_Tier_Weight")
 
 # Components dataframes
-coli_components = df[["utility_regularit", "subscription_adherence", "expense_stability"]].copy()
-bri_components = df[["camels_proxy", "upi_success", "tier_weight_component"]].copy()
+coli_components = df[[
+    "Utility_Payment_Regularity", 
+    "Recurring_Payment_Stability", 
+    "Expense_Volatility_Inverse"
+]].copy()
+
+bri_components = df[[
+    "CAMELS_Score", 
+    "UPI_Success_Rate", 
+    "Bank_Tier_Weight"
+]].copy()
+
+print(f"\n✓ CoLI components: {list(coli_components.columns)}")
+print(f"✓ BRI components: {list(bri_components.columns)}")
 
 # ---------------------------------------------------------------------
 # Create better default target with variation
