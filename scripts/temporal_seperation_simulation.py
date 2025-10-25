@@ -72,8 +72,8 @@ class TemporalCreditRiskSimulator:
             'alpha2': 3.0,  # Negative Savings is a *major* driver
             'alpha3': 2.0,  # Volatility is a clear signal
             'alpha4': 2.0   # Bank risk (CAELS) is a strong proxy
-}
-        
+        }
+        print("\n\n--- DEBUG TEST: HAZARD ALPHAS SET TO 5.0, 3.0, 2.0, 2.0 ---\n\n")
         # Default probability model coefficients (CALIBRATED)
         self.default_model = {
             'gamma0': -4.0,  # A new baseline. THIS IS YOUR MAIN TUNING KNOB.
